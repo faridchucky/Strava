@@ -47,8 +47,12 @@ svg text{fill:var(--mut);font-family:inherit;font-size:11px}
 nav button{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.72rem;font-weight:600;overflow:visible}
 nav button .ic{font-size:1.3rem;line-height:1.1}
 nav button.rec .dot{width:54px;height:54px;border-radius:50%;background:var(--ac);color:#fff;display:grid;place-items:center;font-size:2rem;font-weight:400;margin-top:-26px;box-shadow:0 4px 12px rgba(252,76,2,.45)}
+#map{height:260px;border-radius:12px;overflow:hidden;background:var(--bg);margin-top:12px}
 .rec-btn{width:124px;height:124px;border-radius:50%;display:block;margin:18px auto 0;font-size:1.1rem}
 </style>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#fc4c02">
+<link rel="apple-touch-icon" href="icon-192.png">
 </head>
 <body>
 <main id="app"></main>
@@ -121,10 +125,10 @@ function home(){const w=week(),tm=w.reduce((s,x)=>s+x.min,0),km=w.reduce((s,x)=>
 <h2 style="margin:18px 4px 10px">Aktivitas terbaru</h2>${S.acts.length?S.acts.slice().reverse().slice(0,10).map(feedCard).join(""):`<div class="card"><p class="mut" style="margin:0">Belum ada aktivitas. Tekan tombol oranye untuk mulai merekam.</p></div>`}`}
 
 function log(){const rec=gps&&gps.on;
- return `<h1>Rekam aktivitas</h1><div class="card"><h2>Rekam dengan GPS</h2><p class="mut">Untuk jalan, lari, atau sepeda di luar ruangan. Izinkan akses lokasi dan biarkan layar tetap menyala.</p>
+ return `<h1>Rekam aktivitas</h1><div class="card"><h2>Rekam dengan GPS</h2><p class="mut">Untuk jalan, lari, atau sepeda di luar ruangan. Layar dijaga tetap menyala selama merekam; biarkan tab ini terbuka. Jika izin lokasi terhalang pesan overlay, matikan gelembung chat atau filter layar sebentar.</p>
  <label>Jenis</label><select id="gt">${["Jalan","Lari","Sepeda"].map(t=>`<option>${t}</option>`).join("")}</select>
  <div id="gst" class="${rec?"":"hide"}" style="margin-top:12px"><div class="big" id="gk">0.00</div><div class="mut">km · <span id="gm">0:00</span></div></div>
- <button id="gb" class="${rec?"g":"p"} rec-btn">${rec?"Selesai":"Mulai"}</button></div>
+ <div id="map" class="${rec?"":"hide"}"></div><button id="gb" class="${rec?"g":"p"} rec-btn">${rec?"Selesai":"Mulai"}</button></div>
  <div class="card"><h2>Input manual</h2>
  <label>Jenis</label><select id="mt">${Object.keys(TYPES).map(t=>`<option>${t}</option>`).join("")}</select>
  <div class="row"><div><label>Durasi (menit)</label><input id="md" type="number" min="1" value="30" inputmode="numeric"></div><div><label>Jarak (km)</label><input id="mk" type="number" min="0" step="0.1" value="0" inputmode="decimal"></div></div>
@@ -146,7 +150,7 @@ function body(){const p=S.profile,c=calc(),tdee=Math.round(c.bmr*1.375);
 function render(){
  $("#app").innerHTML=`<div id="sync" class="mut" style="text-align:right;font-size:.75rem">${label()}</div>`+(tab==="home"?home():tab==="log"?log():body());
  $("#nav").innerHTML=[["home","Beranda","⌂"],["log","Rekam","+"],["body","Kamu","☺"]].map(([k,l,ic])=>`<button data-t="${k}" class="${k==="log"?"rec":""}" ${tab===k?'aria-current="page"':""}>${k==="log"?`<div class="dot">${ic}</div>`:`<div class="ic">${ic}</div>`}${l}</button>`).join("");
- bind()}
+ bind();updMap()}
 function bind(){
  document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{tab=b.dataset.t;render()});
  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{S.acts=S.acts.filter(a=>a.id!=b.dataset.del);save();render()});
@@ -158,18 +162,46 @@ function bind(){
  if($("#xb"))$("#xb").onclick=()=>{if(confirm("Hapus semua riwayat aktivitas?")){S.acts=[];save();render()}}}
 function hav(a,b){const R=6371,r=x=>x*Math.PI/180,dl=r(b.lat-a.lat),dn=r(b.lon-a.lon);
  const q=Math.sin(dl/2)**2+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(q))}
+let LM=null,mapEl=null,lyr=null,mk=null,leaflet="idle";
+function loadLeaflet(){if(leaflet!=="idle")return;leaflet="loading";
+ const l=document.createElement("link");l.rel="stylesheet";l.href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css";
+ l.onload=()=>{const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js";
+  s.onload=()=>{leaflet="ok";updMap()};s.onerror=()=>{leaflet="fail"};document.head.appendChild(s)};
+ l.onerror=()=>{leaflet="fail"};document.head.appendChild(l)}
+function svgRoute(el){const P=gps.pts,a=P.map(x=>x[0]),b=P.map(x=>x[1]);
+ const la0=Math.min(...a),la1=Math.max(...a),lo0=Math.min(...b),lo1=Math.max(...b),k=Math.cos(la0*Math.PI/180),W=300,H=220,pad=24;
+ const dx=Math.max((lo1-lo0)*k,1e-4),dy=Math.max(la1-la0,1e-4),sc=Math.min((W-2*pad)/dx,(H-2*pad)/dy);
+ const X=lo=>(W/2+(lo-(lo0+lo1)/2)*k*sc).toFixed(1),Y=la=>(H/2-(la-(la0+la1)/2)*sc).toFixed(1),l=P[P.length-1];
+ el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" role="img" aria-label="Rute"><polyline points="${P.map(x=>X(x[1])+","+Y(x[0])).join(" ")}" fill="none" stroke="var(--ac)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${X(l[1])}" cy="${Y(l[0])}" r="7" fill="var(--ac)" stroke="#fff" stroke-width="3"/></svg>`}
+function updMap(){const el=document.querySelector("#map");if(!el||!gps||!gps.on)return;
+ if(!gps.pts||!gps.pts.length){el.innerHTML='<p class="mut" style="padding:12px">Mencari sinyal GPS…</p>';return}
+ const p=gps.pts[gps.pts.length-1];
+ if(leaflet==="ok"&&window.L){
+  if(mapEl!==el){try{LM&&LM.remove()}catch(e){}el.innerHTML="";LM=L.map(el,{zoomControl:false}).setView(p,17);
+   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(LM);
+   lyr=L.polyline(gps.pts,{color:"#fc4c02",weight:5}).addTo(LM);
+   mk=L.circleMarker(p,{radius:8,color:"#fff",weight:3,fillColor:"#fc4c02",fillOpacity:1}).addTo(LM);mapEl=el}
+  else{lyr.setLatLngs(gps.pts);mk.setLatLng(p);LM.panTo(p)}
+  return}
+ if(leaflet==="idle")loadLeaflet();
+ svgRoute(el)}
+let wl=null;
+async function lockScreen(){try{if("wakeLock" in navigator&&!wl){wl=await navigator.wakeLock.request("screen");wl.addEventListener("release",()=>{wl=null})}}catch(e){}}
+function unlock(){try{wl&&wl.release()}catch(e){}wl=null}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&gps&&gps.on)lockScreen()});
 function toggleGps(){
- if(gps&&gps.on){navigator.geolocation.clearWatch(gps.id);clearInterval(gps.tm);
+ if(gps&&gps.on){navigator.geolocation.clearWatch(gps.id);clearInterval(gps.tm);unlock();try{LM&&LM.remove()}catch(e){}LM=null;mapEl=null;
   const min=Math.max(1,Math.round((Date.now()-gps.t0)/60000)),t=gps.type,i="Sedang";
   S.acts.push({id:Date.now(),date:gps.t0,type:t,min,km:gps.km,int:i,kc:kcal(t,min,i,S.profile.w)});save();gps=null;tab="home";return render()}
  if(!navigator.geolocation)return alert("Perangkat ini tidak mendukung GPS di browser. Gunakan input manual.");
- gps={on:true,km:0,last:null,t0:Date.now(),type:$("#gt").value};
+ gps={on:true,km:0,last:null,t0:Date.now(),type:$("#gt").value};lockScreen();
  gps.id=navigator.geolocation.watchPosition(pos=>{const c={lat:pos.coords.latitude,lon:pos.coords.longitude};
   if(pos.coords.accuracy>40)return;if(gps.last){const d=hav(gps.last,c);if(d>0.003)gps.km+=d,gps.last=c}else gps.last=c;
-  if($("#gk"))$("#gk").textContent=gps.km.toFixed(2)},()=>{alert("Izin lokasi ditolak atau GPS tidak tersedia. Aktifkan izin lokasi lalu coba lagi.");
+  if($("#gk"))$("#gk").textContent=gps.km.toFixed(2);gps.pts=gps.pts||[];if(gps.last===c)gps.pts.push([c.lat,c.lon]);updMap()},()=>{unlock();alert("Izin lokasi gagal. Jika muncul pesan \"overlay\", matikan gelembung chat atau filter layar dulu. Atau buka Pengaturan > Aplikasi > Chrome > Izin > Lokasi > Izinkan, lalu coba lagi.");
   clearInterval(gps.tm);gps=null;render()},{enableHighAccuracy:true});
  gps.tm=setInterval(()=>{const s=Math.floor((Date.now()-gps.t0)/1000);if($("#gm"))$("#gm").textContent=Math.floor(s/60)+":"+String(s%60).padStart(2,"0")},1000);render()}
 render();initSync();
 </script>
+<script>if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}))</script>
 </body>
 </html>
